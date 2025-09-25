@@ -6,26 +6,24 @@ DB_USER="msf"
 DB_PASS="securepassword" # IMPORTANT: Change this password!
 
 # Ensure the script is run as root
-if [ "$(id -u)" -ne 0 ]; then
+if [ "$(id-u)" -ne 0 ]; then
    echo "This script must be run as root or with sudo."
    exit 1
 fi
 
 echo "Starting Metasploit Framework installation on Alpine Linux..."
-echo "This process may take a while, especially the bundle install step."
 echo "------------------------------------------------------------------"
 
-## 1. Install Dependencies (Corrected) ##
+## 1. Install Dependencies (Corrected for Alpine) ##
 echo "--> 1. Installing required packages..."
-# Removed 'ruby-io-console' and 'ruby-webrick' as they are not separate packages in Alpine 3.22.
-# Their functionality is provided by the core 'ruby' package or installed later by 'bundle install'.
+# Added 'postgresql-initscripts' (for setup/rc-service) and ensured 'ncurses' is present.
 apk update
 apk add build-base ruby ruby-bigdecimal ruby-bundler ruby-dev libffi-dev openssl-dev \
-readline-dev sqlite-dev postgresql-dev libpcap-dev libxml2-dev libxslt-dev \
-yaml-dev zlib-dev ncurses-dev autoconf bison subversion git sqlite nmap
+readline-dev sqlite-dev postgresql-dev postgresql libpcap-dev libxml2-dev \
+libxslt-dev yaml-dev zlib-dev ncurses ncurses-dev autoconf bison subversion git sqlite nmap
 
 if [ $? -ne 0 ]; then
-    echo "❌ ERROR: Dependency installation failed. Please check your network and repository configuration."
+    echo "❌ ERROR: Dependency installation failed. Exiting."
     exit 1
 fi
 echo "    ...Packages installed successfully. ✅"
@@ -47,7 +45,6 @@ fi
 ## 3. Install Ruby Gems ##
 echo "--> 3. Installing Ruby dependencies (via bundle install)..."
 cd "$MSF_DIR"
-# The 'development' and 'test' groups are typically not needed for runtime.
 bundle install --without development test
 
 if [ $? -ne 0 ]; then
@@ -58,25 +55,26 @@ echo "    ...Ruby gems installed successfully. ✅"
 
 # ------------------------------------------------------------------
 
-## 4. Configure and Start PostgreSQL ##
+## 4. Configure and Start PostgreSQL (Corrected) ##
 echo "--> 4. Setting up and starting PostgreSQL database..."
 
-# Initialize PostgreSQL data directory and setup service
-if [ ! -d "/var/lib/postgresql/data" ]; then
-    echo "    Initializing PostgreSQL database..."
-    /usr/bin/postgresql-setup -i
-fi
-
-# Add PostgreSQL to runlevels and start the service
+# Start the PostgreSQL service using the OpenRC service command
+echo "    Starting PostgreSQL service..."
 rc-service postgresql start
+
+# Enable PostgreSQL to start on boot
+rc-update add postgresql default
 
 # Wait briefly for the database to start
 sleep 5
 
 # Create database user and database for Metasploit
 echo "    Creating Metasploit user and database..."
-su - postgres -c "create user $DB_USER with password '$DB_PASS';" 2>/dev/null
-su - postgres -c "createdb -O $DB_USER msf" 2>/dev/null
+# The '2>/dev/null' suppresses warnings if user/db already exist, making the script idempotent.
+su - postgres -c "psql -c \"CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';\"" 2>/dev/null
+# su - postgres -c "create user $DB_USER with password '$DB_PASS';" 2>/dev/null
+su - postgres -c "psql -c \"CREATE DATABASE msf OWNER msf;\"" 2>/dev/null
+# su - postgres -c "createdb -O $DB_USER msf" 2>/dev/null
 
 # Create database configuration file for Metasploit
 mkdir -p "$MSF_DIR/config"
@@ -92,7 +90,7 @@ production:
   port: 5432
 EOM
 
-echo "    ...PostgreSQL configured. ✅"
+echo "    ...PostgreSQL configured and running. ✅"
 
 # ------------------------------------------------------------------
 
@@ -101,4 +99,4 @@ echo "--> 5. Installation complete. 🎉"
 echo ""
 echo "To launch Metasploit console (msfconsole), run the following command:"
 echo "    $MSF_DIR/msfconsole"
-echo "To verify database connection, run 'db_status' inside msfconsole."
+echo "Inside msfconsole, run 'db_status' to verify database connection."
